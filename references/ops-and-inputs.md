@@ -22,7 +22,7 @@ Convert one source into one public Google Drive link.
 | Inbound attachment path | Upload directly |
 | Direct media URL | HTTP download, then upload |
 | Public Instagram reel/post URL | cobalt first, then gallery-dl, then embed fallback, then yt-dlp |
-| Public YouTube URL | cobalt first, then yt-dlp, then optional browser-CDP relay capture fallback |
+| Public YouTube URL | relay-backed browser capture first when CDP is available, then cobalt, then yt-dlp |
 
 ## Boundaries
 
@@ -61,11 +61,10 @@ Convert one source into one public Google Drive link.
 5. If all fail, report the real blocker
 
 ### YouTube
-1. Try self-hosted cobalt
-2. If cobalt is blocked by login/session checks, try `yt-dlp`
-3. If `yt-dlp` is blocked and `--browser-cdp-base` is configured, record the video inside the browser session via `captureStream()` + `MediaRecorder`
-4. Transfer the captured blob back over CDP and upload it
-5. If all fail, report the real blocker
+1. If a browser CDP endpoint is available, use relay-backed capture first because it is the known-good path in this environment
+2. If browser capture is unavailable or fails, try self-hosted cobalt
+3. If cobalt is blocked by login/session checks, try `yt-dlp`
+4. If all fail, report the real blocker
 
 ## Failure map
 
@@ -83,7 +82,7 @@ Convert one source into one public Google Drive link.
 - [ ] public permission is verified, not assumed
 - [ ] direct media URL works end-to-end
 - [ ] Instagram reel/post works end-to-end via cobalt when cobalt is available
-- [ ] YouTube works end-to-end via relay capture when a compatible browser CDP session is supplied
+- [ ] YouTube works end-to-end via relay capture when a compatible browser CDP session exists locally
 - [ ] unsupported/private URL fails honestly
 
 ## Manual review checklist

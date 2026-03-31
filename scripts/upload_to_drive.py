@@ -24,6 +24,9 @@ DEFAULT_GALLERY_DL_CANDIDATES = [
 DEFAULT_COBALT_API_CANDIDATES = [
     "http://127.0.0.1:9469/",
 ]
+DEFAULT_BROWSER_CDP_BASE_CANDIDATES = [
+    "http://127.0.0.1:18800",
+]
 DEFAULT_FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 
 YOUTUBE_HOSTS = {
@@ -150,6 +153,17 @@ def probe_cobalt_api(api_base: str, provider: Optional[str] = None) -> bool:
         return False
 
 
+def probe_browser_cdp_base(cdp_base: str) -> bool:
+    try:
+        base = cdp_base.rstrip("/")
+        req = urllib.request.Request(f"{base}/json/version", headers={"Accept": "application/json", "User-Agent": "OpenClaw upload-to-drive/1.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = json.loads(resp.read().decode("utf-8", "ignore"))
+        return bool(data.get("webSocketDebuggerUrl"))
+    except Exception:
+        return False
+
+
 def detect_cobalt_api(explicit: str | None, provider: Optional[str] = None) -> str | None:
     candidates: list[str] = []
     if explicit:
@@ -166,6 +180,26 @@ def detect_cobalt_api(explicit: str | None, provider: Optional[str] = None) -> s
             continue
         seen.add(candidate)
         if probe_cobalt_api(candidate, provider=provider):
+            return candidate
+    return None
+
+
+def detect_browser_cdp_base(explicit: str | None) -> str | None:
+    candidates: list[str] = []
+    if explicit:
+        candidates.append(explicit)
+    env_candidate = os.environ.get("UPLOAD_TO_DRIVE_BROWSER_CDP_BASE", "").strip()
+    if env_candidate:
+        candidates.append(env_candidate)
+    candidates.extend(DEFAULT_BROWSER_CDP_BASE_CANDIDATES)
+
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.rstrip("/")
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if probe_browser_cdp_base(candidate):
             return candidate
     return None
 
@@ -505,6 +539,12 @@ def download_youtube(
 ) -> Tuple[str, str]:
     errors: list[str] = []
 
+    if browser_cdp_base:
+        try:
+            return download_youtube_via_browser_capture(url, temp_dir, browser_cdp_base)
+        except UploadError as exc:
+            errors.append(f"browser fallback failed: {exc.message}")
+
     if cobalt_api:
         try:
             return download_via_cobalt(url, temp_dir, provider="youtube", cobalt_api=cobalt_api)
@@ -523,12 +563,6 @@ def download_youtube(
             )
         except UploadError as exc:
             errors.append(f"yt-dlp failed: {exc.message}")
-
-    if browser_cdp_base:
-        try:
-            return download_youtube_via_browser_capture(url, temp_dir, browser_cdp_base)
-        except UploadError as exc:
-            errors.append(f"browser fallback failed: {exc.message}")
 
     detail = " | ".join(errors) if errors else "no YouTube downloader path available"
     raise UploadError("download failed", detail)
@@ -749,6 +783,7 @@ def main() -> int:
     ytdlp_path = detect_ytdlp(args.ytdlp or None)
     gallery_dl_path = detect_gallery_dl(args.gallery_dl or None)
     cobalt_api = detect_cobalt_api(args.cobalt_api or None, provider=source_type) if source_type in {"youtube", "instagram"} else None
+    browser_cdp_base = detect_browser_cdp_base(args.browser_cdp_base or None) if source_type == "youtube" else (args.browser_cdp_base or None)
 
     try:
         ensure_auth(args.account, args.auth_guard or None)
@@ -760,7 +795,7 @@ def main() -> int:
             ffmpeg_path=args.ffmpeg,
             cookies_browser=args.cookies_browser or None,
             cookies_profile=args.cookies_profile or None,
-            browser_cdp_base=args.browser_cdp_base or None,
+            browser_cdp_base=browser_cdp_base,
         )
         drive_name = sanitize_name(args.name or suggested_name)
         file_id, link = upload_file(local_path, drive_name, args.account)
@@ -779,7 +814,7 @@ def main() -> int:
             "auth_guard": args.auth_guard or None,
             "cobalt_api": cobalt_api,
             "gallery_dl": gallery_dl_path,
-            "browser_cdp_base": args.browser_cdp_base or None,
+            "browser_cdp_base": browser_cdp_base,
         }
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))

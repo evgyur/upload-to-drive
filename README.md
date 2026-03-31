@@ -54,7 +54,7 @@ python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_dri
   --cobalt-api http://127.0.0.1:9469/
 ```
 
-Use browser-CDP relay capture fallback for YouTube:
+Use browser-CDP relay capture for YouTube:
 
 ```bash
 python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_drive.py 'https://www.youtube.com/watch?v=...' \
@@ -87,7 +87,7 @@ Environment variables:
 The best current path is a self-hosted `cobalt` instance with `alwaysProxy=true`. This avoids brittle direct media URL scraping and works well for public reels/posts in practice.
 
 ### YouTube
-The script tries a self-hosted `cobalt` instance first, then `yt-dlp`, then an optional browser-CDP relay capture fallback. That last path records the video inside the browser session via `captureStream()` + `MediaRecorder` and transfers the resulting file back over CDP. A session-capable cobalt setup is still the cleanest long-term route, but relay capture is the practical fallback when direct download paths hit login or anti-bot walls.
+The script prefers a browser-CDP relay capture path when a compatible local browser session exists. That path records the video inside the browser session via `captureStream()` + `MediaRecorder` and transfers the resulting file back over CDP. If browser capture is unavailable, the script falls back to self-hosted `cobalt`, then `yt-dlp`.
 
 ## Notes
 

@@ -100,7 +100,7 @@ Environment variables:
 - `UPLOAD_TO_DRIVE_YTDLP` — optional yt-dlp binary path
 - `UPLOAD_TO_DRIVE_COOKIES_BROWSER` — optional browser name for yt-dlp/gallery-dl cookies
 - `UPLOAD_TO_DRIVE_COOKIES_PROFILE` — optional browser profile path for cookies
-- `UPLOAD_TO_DRIVE_BROWSER_CDP_BASE` — optional browser CDP base URL for YouTube fallback
+- `UPLOAD_TO_DRIVE_BROWSER_CDP_BASE` — optional browser CDP base URL for YouTube relay capture; local `http://127.0.0.1:18800` is auto-detected when available
 - `UPLOAD_TO_DRIVE_FFMPEG` — optional ffmpeg binary path
 
 ## Source handling
@@ -108,7 +108,7 @@ Environment variables:
 - **Local file / attachment** → upload directly
 - **Direct media URL** → download with HTTP, then upload
 - **Instagram** → self-hosted cobalt first, then gallery-dl, then embed fallback, then yt-dlp
-- **YouTube** → self-hosted cobalt first, then yt-dlp, then optional browser-CDP relay capture fallback
+- **YouTube** → relay-backed browser capture first when a browser CDP endpoint is available, then self-hosted cobalt, then yt-dlp
 
 ## Output contract
 
@@ -128,7 +128,7 @@ Return:
 - [ ] inbound attachment path uploads and returns a Drive URL
 - [ ] direct media URL downloads, uploads, and returns a Drive URL
 - [ ] Instagram public reel/post works through cobalt when a local cobalt API exists
-- [ ] YouTube public URL works through cobalt when possible, or through relay-backed browser capture when `--browser-cdp-base` is provided
+- [ ] YouTube public URL works through relay-backed browser capture when a browser CDP endpoint is available
 - [ ] `--name` is preserved in Drive metadata
 - [ ] optional `--account` works
 - [ ] optional `--auth-guard` hook works when provided
