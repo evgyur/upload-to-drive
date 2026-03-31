@@ -12,7 +12,7 @@ Convert one source into one public Google Drive link.
 - `gallery-dl` is an Instagram-focused fallback backend
 - `yt-dlp` remains a fallback backend for YouTube/Instagram
 - `ffmpeg` supports yt-dlp merge flows when needed
-- optional browser CDP can improve YouTube fallback behavior
+- optional browser CDP can provide a relay-backed YouTube capture fallback
 
 ## Input matrix
 
@@ -22,7 +22,7 @@ Convert one source into one public Google Drive link.
 | Inbound attachment path | Upload directly |
 | Direct media URL | HTTP download, then upload |
 | Public Instagram reel/post URL | cobalt first, then gallery-dl, then embed fallback, then yt-dlp |
-| Public YouTube URL | cobalt first, then yt-dlp, then optional browser-CDP fallback |
+| Public YouTube URL | cobalt first, then yt-dlp, then optional browser-CDP relay capture fallback |
 
 ## Boundaries
 
@@ -63,8 +63,9 @@ Convert one source into one public Google Drive link.
 ### YouTube
 1. Try self-hosted cobalt
 2. If cobalt is blocked by login/session checks, try `yt-dlp`
-3. If `yt-dlp` is blocked and `--browser-cdp-base` is configured, try browser fallback
-4. If all fail, report the real blocker
+3. If `yt-dlp` is blocked and `--browser-cdp-base` is configured, record the video inside the browser session via `captureStream()` + `MediaRecorder`
+4. Transfer the captured blob back over CDP and upload it
+5. If all fail, report the real blocker
 
 ## Failure map
 
@@ -82,7 +83,7 @@ Convert one source into one public Google Drive link.
 - [ ] public permission is verified, not assumed
 - [ ] direct media URL works end-to-end
 - [ ] Instagram reel/post works end-to-end via cobalt when cobalt is available
-- [ ] YouTube failure paths surface real session/login blockers
+- [ ] YouTube works end-to-end via relay capture when a compatible browser CDP session is supplied
 - [ ] unsupported/private URL fails honestly
 
 ## Manual review checklist

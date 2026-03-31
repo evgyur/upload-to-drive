@@ -10,6 +10,7 @@ OpenClaw skill that turns an input into a public Google Drive link.
 - uses self-hosted `cobalt` as the preferred downloader backend for supported public sources
 - uses `gallery-dl` as an Instagram fallback backend
 - uses `yt-dlp` as another fallback backend
+- uses relay-backed browser capture for YouTube when downloader backends fail
 - verifies that `anyone with link -> reader` is actually applied before returning the final URL
 
 ## Command
@@ -53,7 +54,7 @@ python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_dri
   --cobalt-api http://127.0.0.1:9469/
 ```
 
-Use browser-CDP fallback for YouTube:
+Use browser-CDP relay capture fallback for YouTube:
 
 ```bash
 python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_drive.py 'https://www.youtube.com/watch?v=...' \
@@ -86,7 +87,7 @@ Environment variables:
 The best current path is a self-hosted `cobalt` instance with `alwaysProxy=true`. This avoids brittle direct media URL scraping and works well for public reels/posts in practice.
 
 ### YouTube
-The script tries a self-hosted `cobalt` instance first, then `yt-dlp`, then optional browser-CDP fallback. A session-capable cobalt setup is the cleanest long-term route for YouTube.
+The script tries a self-hosted `cobalt` instance first, then `yt-dlp`, then an optional browser-CDP relay capture fallback. That last path records the video inside the browser session via `captureStream()` + `MediaRecorder` and transfers the resulting file back over CDP. A session-capable cobalt setup is still the cleanest long-term route, but relay capture is the practical fallback when direct download paths hit login or anti-bot walls.
 
 ## Notes
 
@@ -99,6 +100,6 @@ The script tries a self-hosted `cobalt` instance first, then `yt-dlp`, then opti
 
 - `SKILL.md`
 - `scripts/upload_to_drive.py`
-- `scripts/browser_cdp_youtube.mjs`
+- `scripts/browser_cdp_youtube_capture.mjs`
 - `references/ops-and-inputs.md`
 - `references/upstream-link.md`

@@ -409,36 +409,34 @@ def download_instagram_embed(url: str, temp_dir: str) -> Tuple[str, str]:
     return local_path, Path(local_path).name
 
 
-def browser_youtube_media_url(url: str, browser_cdp_base: str) -> Tuple[str, str]:
-    video_id = youtube_video_id(url)
-    helper = os.path.join(os.path.dirname(__file__), "browser_cdp_youtube.mjs")
+def download_youtube_via_browser_capture(url: str, temp_dir: str, browser_cdp_base: str) -> Tuple[str, str]:
+    video_id = youtube_video_id(url) or "youtube"
+    helper = os.path.join(os.path.dirname(__file__), "browser_cdp_youtube_capture.mjs")
     if not os.path.exists(helper):
-        raise UploadError("download failed", f"browser helper not found: {helper}")
+        raise UploadError("download failed", f"browser capture helper not found: {helper}")
     node = shutil.which("node")
     if not node:
         raise UploadError("download failed", "browser fallback requires node in PATH")
+
+    output_path = os.path.join(temp_dir, sanitize_name(f"youtube_{video_id}.webm"))
     try:
-        proc = run([node, helper, browser_cdp_base, url], capture=True, check=True)
+        proc = run([node, helper, browser_cdp_base, url, output_path], capture=True, check=True)
         payload = json.loads(proc.stdout)
     except subprocess.CalledProcessError as exc:
-        detail = (exc.stderr or exc.stdout or "browser CDP helper failed").strip()
+        detail = (exc.stderr or exc.stdout or "browser CDP capture helper failed").strip()
         raise UploadError("download failed", detail)
     except Exception as exc:
-        raise UploadError("download failed", f"browser helper parse failed: {exc}")
+        raise UploadError("download failed", f"browser capture helper parse failed: {exc}")
 
-    if not payload:
-        raise UploadError("download failed", "browser fallback did not produce any page payload")
-    usable = [x for x in payload.get("formats") or [] if x.get("url") and "video/mp4" in (x.get("mimeType") or "")]
-    if not usable:
-        status = (payload.get("playability") or {}).get("status")
-        reason = (payload.get("playability") or {}).get("reason") or "no usable mp4 format exposed"
-        if status and status != "OK":
-            raise UploadError("unsupported/private URL", f"YouTube browser fallback blocked: {status} ({reason})")
-        raise UploadError("download failed", f"YouTube browser fallback found no direct mp4 format ({reason})")
-    usable.sort(key=lambda x: (x.get("height") or 0, x.get("bitrate") or 0))
-    best = usable[-1]
-    title = sanitize_name(payload.get("title") or (video_id or "youtube_video"))
-    return best["url"], f"{title}.mp4"
+    local_path = payload.get("outputPath") or output_path
+    if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+        raise UploadError("download failed", "browser capture helper finished without a file")
+    filename = payload.get("filename") or Path(local_path).name
+    filename = sanitize_name(filename)
+    final_path = os.path.join(temp_dir, filename)
+    if local_path != final_path:
+        os.replace(local_path, final_path)
+    return final_path, Path(final_path).name
 
 
 def download_with_ytdlp(
@@ -528,19 +526,7 @@ def download_youtube(
 
     if browser_cdp_base:
         try:
-            media_url, filename = browser_youtube_media_url(url, browser_cdp_base)
-            local_path, _ = download_http(
-                media_url,
-                temp_dir,
-                filename_hint=filename,
-                headers={
-                    "Referer": url,
-                    "Origin": "https://www.youtube.com",
-                    "User-Agent": "Mozilla/5.0",
-                },
-                media_only=True,
-            )
-            return local_path, Path(local_path).name
+            return download_youtube_via_browser_capture(url, temp_dir, browser_cdp_base)
         except UploadError as exc:
             errors.append(f"browser fallback failed: {exc.message}")
 

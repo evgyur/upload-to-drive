@@ -69,7 +69,7 @@ python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_dri
   --cobalt-api http://127.0.0.1:9469/
 ```
 
-Optional browser-CDP YouTube fallback:
+Optional browser-CDP YouTube relay capture fallback:
 
 ```bash
 python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_drive.py <youtube_url> \
@@ -108,7 +108,7 @@ Environment variables:
 - **Local file / attachment** → upload directly
 - **Direct media URL** → download with HTTP, then upload
 - **Instagram** → self-hosted cobalt first, then gallery-dl, then embed fallback, then yt-dlp
-- **YouTube** → self-hosted cobalt first, then yt-dlp, then optional browser-CDP fallback
+- **YouTube** → self-hosted cobalt first, then yt-dlp, then optional browser-CDP relay capture fallback
 
 ## Output contract
 
@@ -128,12 +128,12 @@ Return:
 - [ ] inbound attachment path uploads and returns a Drive URL
 - [ ] direct media URL downloads, uploads, and returns a Drive URL
 - [ ] Instagram public reel/post works through cobalt when a local cobalt API exists
-- [ ] YouTube public URL works through cobalt when a session-capable cobalt stack exists, or fails honestly otherwise
+- [ ] YouTube public URL works through cobalt when possible, or through relay-backed browser capture when `--browser-cdp-base` is provided
 - [ ] `--name` is preserved in Drive metadata
 - [ ] optional `--account` works
 - [ ] optional `--auth-guard` hook works when provided
 - [ ] optional `--cobalt-api` works when provided
-- [ ] optional `--browser-cdp-base` fallback works when provided
+- [ ] optional `--browser-cdp-base` relay capture fallback works when provided
 
 ## Done Criteria
 
