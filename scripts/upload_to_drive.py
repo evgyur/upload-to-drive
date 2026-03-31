@@ -130,6 +130,128 @@ def ensure_tools_for_video_download(ytdlp_path: str | None, ffmpeg_path: str) ->
         raise UploadError("download failed", f"ffmpeg not found: {ffmpeg_path}")
 
 
+def fetch_text(url: str, *, headers: Optional[dict[str, str]] = None, timeout: int = 60) -> str:
+    req = urllib.request.Request(url, headers=headers or {"User-Agent": "Mozilla/5.0"})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read().decode("utf-8", "ignore")
+
+
+def direct_url_filename(url: str, headers) -> str:
+    cd = headers.get("Content-Disposition", "")
+    match = re.search(r"filename\*=UTF-8''([^;]+)", cd)
+    if match:
+        return urllib.parse.unquote(match.group(1))
+    match = re.search(r'filename="?([^";]+)"?', cd)
+    if match:
+        return match.group(1)
+    path_name = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path)).name
+    if path_name:
+        return path_name
+    ctype = headers.get_content_type() if hasattr(headers, "get_content_type") else headers.get("Content-Type", "application/octet-stream")
+    ext = mimetypes.guess_extension(ctype.split(";")[0].strip()) or ".bin"
+    return f"download{ext}"
+
+
+def download_direct_url(url: str, temp_dir: str) -> Tuple[str, str]:
+    req = urllib.request.Request(url, headers={"User-Agent": "OpenClaw upload-to-drive/1.0"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            headers = resp.headers
+            ctype = headers.get_content_type() if hasattr(headers, "get_content_type") else headers.get("Content-Type", "")
+            path = urllib.parse.urlparse(url).path.lower()
+            ext = Path(path).suffix.lower()
+            if not (str(ctype).startswith(("video/", "audio/", "image/", "application/pdf")) or ext in DIRECT_MEDIA_EXTS):
+                raise UploadError("unsupported/private URL", f"direct URL is not an obvious media file (content-type={ctype or 'unknown'})")
+            filename = sanitize_name(direct_url_filename(url, headers))
+            local_path = os.path.join(temp_dir, filename)
+            with open(local_path, "wb") as fh:
+                shutil.copyfileobj(resp, fh)
+    except UploadError:
+        raise
+    except Exception as exc:
+        raise UploadError("download failed", str(exc))
+
+    if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
+        raise UploadError("download failed", "direct URL download produced no file")
+    return local_path, filename
+
+
+def youtube_video_id(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    host = parsed.netloc.lower()
+    if host in {"youtu.be", "www.youtu.be"}:
+        return parsed.path.strip("/") or None
+    qs = urllib.parse.parse_qs(parsed.query)
+    if "v" in qs and qs["v"]:
+        return qs["v"][0]
+    m = re.search(r"/(shorts|live|embed)/([A-Za-z0-9_-]{11})", parsed.path)
+    if m:
+        return m.group(2)
+    return None
+
+
+def instagram_shortcode(url: str) -> str | None:
+    parsed = urllib.parse.urlparse(url)
+    m = re.search(r"/(?:reel|p)/([^/?#]+)/?", parsed.path)
+    return m.group(1) if m else None
+
+
+def download_instagram_embed(url: str, temp_dir: str) -> Tuple[str, str]:
+    code = instagram_shortcode(url)
+    if not code:
+        raise UploadError("download failed", "could not extract Instagram shortcode")
+    embed_url = f"https://www.instagram.com/reel/{code}/embed/"
+    try:
+        text = fetch_text(embed_url)
+    except Exception as exc:
+        raise UploadError("download failed", f"could not fetch Instagram embed page: {exc}")
+
+    m = re.search(r'video_url\\":\\"(https:.*?\.mp4[^"\\]*)', text)
+    if not m:
+        raise UploadError("unsupported/private URL", "Instagram embed page did not expose a direct video URL")
+    media_url = m.group(1)
+    while "\\/" in media_url:
+        media_url = media_url.replace("\\/", "/")
+    local_path, _ = download_direct_url(media_url, temp_dir)
+    filename = sanitize_name(f"instagram_{code}.mp4")
+    final_path = os.path.join(temp_dir, filename)
+    if local_path != final_path:
+        os.replace(local_path, final_path)
+    return final_path, filename
+
+
+def browser_youtube_media_url(url: str, browser_cdp_base: str) -> Tuple[str, str]:
+    video_id = youtube_video_id(url)
+    helper = os.path.join(os.path.dirname(__file__), "browser_cdp_youtube.mjs")
+    if not os.path.exists(helper):
+        raise UploadError("download failed", f"browser helper not found: {helper}")
+    node = shutil.which("node")
+    if not node:
+        raise UploadError("download failed", "browser fallback requires node in PATH")
+    try:
+        proc = run([node, helper, browser_cdp_base, url], capture=True, check=True)
+        payload = json.loads(proc.stdout)
+    except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or exc.stdout or "browser CDP helper failed").strip()
+        raise UploadError("download failed", detail)
+    except Exception as exc:
+        raise UploadError("download failed", f"browser helper parse failed: {exc}")
+
+    if not payload:
+        raise UploadError("download failed", "browser fallback did not produce any page payload")
+    usable = [x for x in payload.get("formats") or [] if x.get("url") and "video/mp4" in (x.get("mimeType") or "")]
+    if not usable:
+        status = (payload.get("playability") or {}).get("status")
+        reason = (payload.get("playability") or {}).get("reason") or "no usable mp4 format exposed"
+        if status and status != "OK":
+            raise UploadError("unsupported/private URL", f"YouTube browser fallback blocked: {status} ({reason})")
+        raise UploadError("download failed", f"YouTube browser fallback found no direct mp4 format ({reason})")
+    usable.sort(key=lambda x: (x.get("height") or 0, x.get("bitrate") or 0))
+    best = usable[-1]
+    title = sanitize_name(payload.get("title") or (video_id or "youtube_video"))
+    return best["url"], f"{title}.mp4"
+
+
 def download_with_ytdlp(
     url: str,
     temp_dir: str,
@@ -183,44 +305,73 @@ def download_with_ytdlp(
     return local_path, Path(local_path).name
 
 
-def direct_url_filename(url: str, headers) -> str:
-    cd = headers.get("Content-Disposition", "")
-    match = re.search(r"filename\*=UTF-8''([^;]+)", cd)
-    if match:
-        return urllib.parse.unquote(match.group(1))
-    match = re.search(r'filename="?([^";]+)"?', cd)
-    if match:
-        return match.group(1)
-    path_name = Path(urllib.parse.unquote(urllib.parse.urlparse(url).path)).name
-    if path_name:
-        return path_name
-    ctype = headers.get_content_type() if hasattr(headers, "get_content_type") else headers.get("Content-Type", "application/octet-stream")
-    ext = mimetypes.guess_extension(ctype.split(";")[0].strip()) or ".bin"
-    return f"download{ext}"
+def download_youtube(
+    url: str,
+    temp_dir: str,
+    *,
+    ytdlp_path: str | None,
+    ffmpeg_path: str,
+    cookies_browser: str | None,
+    cookies_profile: str | None,
+    browser_cdp_base: str | None,
+) -> Tuple[str, str]:
+    first_error: Optional[UploadError] = None
+    if ytdlp_path:
+        try:
+            return download_with_ytdlp(
+                url,
+                temp_dir,
+                ytdlp_path=ytdlp_path,
+                ffmpeg_path=ffmpeg_path,
+                cookies_browser=cookies_browser,
+                cookies_profile=cookies_profile,
+            )
+        except UploadError as exc:
+            first_error = exc
+
+    if browser_cdp_base:
+        try:
+            media_url, filename = browser_youtube_media_url(url, browser_cdp_base)
+            local_path, _ = download_direct_url(media_url, temp_dir)
+            final_path = os.path.join(temp_dir, sanitize_name(filename))
+            if local_path != final_path:
+                os.replace(local_path, final_path)
+            return final_path, Path(final_path).name
+        except UploadError as exc:
+            if first_error:
+                raise UploadError(exc.stage, f"yt-dlp failed: {first_error.message} | browser fallback failed: {exc.message}")
+            raise
+
+    if first_error:
+        raise first_error
+    raise UploadError("download failed", "no YouTube downloader path available")
 
 
-def download_direct_url(url: str, temp_dir: str) -> Tuple[str, str]:
-    req = urllib.request.Request(url, headers={"User-Agent": "OpenClaw upload-to-drive/1.0"})
+def download_instagram(
+    url: str,
+    temp_dir: str,
+    *,
+    ytdlp_path: str | None,
+    ffmpeg_path: str,
+    cookies_browser: str | None,
+    cookies_profile: str | None,
+) -> Tuple[str, str]:
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
-            headers = resp.headers
-            ctype = headers.get_content_type() if hasattr(headers, "get_content_type") else headers.get("Content-Type", "")
-            path = urllib.parse.urlparse(url).path.lower()
-            ext = Path(path).suffix.lower()
-            if not (str(ctype).startswith(("video/", "audio/", "image/", "application/pdf")) or ext in DIRECT_MEDIA_EXTS):
-                raise UploadError("unsupported/private URL", f"direct URL is not an obvious media file (content-type={ctype or 'unknown'})")
-            filename = sanitize_name(direct_url_filename(url, headers))
-            local_path = os.path.join(temp_dir, filename)
-            with open(local_path, "wb") as fh:
-                shutil.copyfileobj(resp, fh)
-    except UploadError:
+        return download_instagram_embed(url, temp_dir)
+    except UploadError as embed_error:
+        if ytdlp_path:
+            try:
+                return download_with_ytdlp(
+                    url,
+                    temp_dir,
+                    ytdlp_path=ytdlp_path,
+                    ffmpeg_path=ffmpeg_path,
+                    cookies_browser=cookies_browser,
+                    cookies_profile=cookies_profile,
+                )
+            except UploadError as ytdlp_error:
+                raise UploadError(ytdlp_error.stage, f"embed fallback failed: {embed_error.message} | yt-dlp failed: {ytdlp_error.message}")
         raise
-    except Exception as exc:
-        raise UploadError("download failed", str(exc))
-
-    if not os.path.exists(local_path) or os.path.getsize(local_path) == 0:
-        raise UploadError("download failed", "direct URL download produced no file")
-    return local_path, filename
 
 
 def resolve_source(
@@ -230,6 +381,7 @@ def resolve_source(
     ffmpeg_path: str,
     cookies_browser: str | None,
     cookies_profile: str | None,
+    browser_cdp_base: str | None,
 ) -> Tuple[str, str, Optional[str]]:
     if os.path.isfile(source):
         return source, Path(source).name, None
@@ -238,8 +390,18 @@ def resolve_source(
 
     temp_dir = tempfile.mkdtemp(prefix="upload-to-drive-")
     provider = classify_url(source)
-    if provider in {"youtube", "instagram"}:
-        local_path, suggested_name = download_with_ytdlp(
+    if provider == "youtube":
+        local_path, suggested_name = download_youtube(
+            source,
+            temp_dir,
+            ytdlp_path=ytdlp_path,
+            ffmpeg_path=ffmpeg_path,
+            cookies_browser=cookies_browser,
+            cookies_profile=cookies_profile,
+            browser_cdp_base=browser_cdp_base,
+        )
+    elif provider == "instagram":
+        local_path, suggested_name = download_instagram(
             source,
             temp_dir,
             ytdlp_path=ytdlp_path,
@@ -357,6 +519,7 @@ def main() -> int:
     parser.add_argument("--ytdlp", default=os.environ.get("UPLOAD_TO_DRIVE_YTDLP", ""), help="yt-dlp binary path for YouTube/Instagram downloads")
     parser.add_argument("--cookies-browser", default=os.environ.get("UPLOAD_TO_DRIVE_COOKIES_BROWSER", ""), help="optional browser name for yt-dlp cookies-from-browser")
     parser.add_argument("--cookies-profile", default=os.environ.get("UPLOAD_TO_DRIVE_COOKIES_PROFILE", ""), help="optional browser profile path for yt-dlp cookies-from-browser")
+    parser.add_argument("--browser-cdp-base", default=os.environ.get("UPLOAD_TO_DRIVE_BROWSER_CDP_BASE", ""), help="optional browser CDP base URL for YouTube fallback, e.g. http://127.0.0.1:18800")
     parser.add_argument("--ffmpeg", default=os.environ.get("UPLOAD_TO_DRIVE_FFMPEG", DEFAULT_FFMPEG), help="ffmpeg binary path")
     args = parser.parse_args()
 
@@ -373,6 +536,7 @@ def main() -> int:
             ffmpeg_path=args.ffmpeg,
             cookies_browser=args.cookies_browser or None,
             cookies_profile=args.cookies_profile or None,
+            browser_cdp_base=args.browser_cdp_base or None,
         )
         drive_name = sanitize_name(args.name or suggested_name)
         file_id, link = upload_file(local_path, drive_name, args.account)
@@ -389,6 +553,7 @@ def main() -> int:
             "link": link,
             "account": args.account or None,
             "auth_guard": args.auth_guard or None,
+            "browser_cdp_base": args.browser_cdp_base or None,
         }
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
