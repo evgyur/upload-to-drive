@@ -8,9 +8,11 @@ Convert one source into one public Google Drive link.
 
 - `gog` CLI handles the Drive upload/share primitives
 - an optional auth-maintenance script can refresh/check auth before upload
-- `yt-dlp` handles YouTube/Instagram downloads when available
+- self-hosted `cobalt` is the preferred downloader backend for supported public sources
+- `gallery-dl` is an Instagram-focused fallback backend
+- `yt-dlp` remains a fallback backend for YouTube/Instagram
 - `ffmpeg` supports yt-dlp merge flows when needed
-- optional browser CDP can improve YouTube reliability when a live browser session exists
+- optional browser CDP can improve YouTube fallback behavior
 
 ## Input matrix
 
@@ -19,8 +21,8 @@ Convert one source into one public Google Drive link.
 | Local file path | Upload directly |
 | Inbound attachment path | Upload directly |
 | Direct media URL | HTTP download, then upload |
-| Public Instagram reel/post URL | Embed-page video extraction first, then yt-dlp fallback |
-| Public YouTube URL | yt-dlp first, then optional browser-CDP fallback |
+| Public Instagram reel/post URL | cobalt first, then gallery-dl, then embed fallback, then yt-dlp |
+| Public YouTube URL | cobalt first, then yt-dlp, then optional browser-CDP fallback |
 
 ## Boundaries
 
@@ -28,6 +30,7 @@ Convert one source into one public Google Drive link.
 - No DRM bypass
 - No "maybe it worked" claims without final Drive link
 - Browser cookies and CDP are optional operator config, not built-in secret dependencies
+- A self-hosted cobalt API is recommended for serious Instagram reliability
 
 ## Operator steps
 
@@ -39,6 +42,8 @@ Convert one source into one public Google Drive link.
 3. Add optional flags/env only when needed:
    - `--account`
    - `--auth-guard`
+   - `--cobalt-api`
+   - `--gallery-dl`
    - `--ytdlp`
    - `--cookies-browser`
    - `--cookies-profile`
@@ -46,28 +51,28 @@ Convert one source into one public Google Drive link.
 4. Return the printed Drive link.
 5. If the script fails, report the real stage that failed.
 
-## Failure map
-
-- `auth failed` — auth probe or optional auth guard failed
-- `download failed` — source URL could not be fetched or an extractor/fallback broke
-- `unsupported/private URL` — page requires auth, is private, or is not a supported media source
-- `upload failed` — `gog drive upload` failed
-- `public share verification failed` — upload succeeded but public permission was not verified
-
 ## Reliability strategy
 
 ### Instagram
-1. Try the public embed page and extract `video_url`
-2. Download the exposed mp4 directly
-3. If that fails, try `yt-dlp`
-4. If both fail, report the actual blocker
+1. Try self-hosted cobalt with `alwaysProxy=true`
+2. If cobalt is unavailable or fails, try `gallery-dl`
+3. If that fails, try embed-page extraction
+4. If that fails, try `yt-dlp`
+5. If all fail, report the real blocker
 
 ### YouTube
-1. Try `yt-dlp`
-2. If `yt-dlp` is blocked and `--browser-cdp-base` is configured, open the video in the browser session
-3. Read `ytInitialPlayerResponse` from the live page
-4. Use the best directly exposed mp4 format URL
-5. If no direct format exists, fail honestly instead of pretending success
+1. Try self-hosted cobalt
+2. If cobalt is blocked by login/session checks, try `yt-dlp`
+3. If `yt-dlp` is blocked and `--browser-cdp-base` is configured, try browser fallback
+4. If all fail, report the real blocker
+
+## Failure map
+
+- `auth failed` — auth probe or optional auth guard failed
+- `download failed` — source URL could not be fetched or a downloader/fallback broke
+- `unsupported/private URL` — page requires auth, is private, or is not a supported media source
+- `upload failed` — `gog drive upload` failed
+- `public share verification failed` — upload succeeded but public permission was not verified
 
 ## Quick test checklist
 
@@ -76,8 +81,8 @@ Convert one source into one public Google Drive link.
 - [ ] `--json` returns parseable JSON with `link` and `file_id`
 - [ ] public permission is verified, not assumed
 - [ ] direct media URL works end-to-end
-- [ ] Instagram reel/post works end-to-end via embed fallback
-- [ ] YouTube works end-to-end when a compatible browser CDP session is supplied
+- [ ] Instagram reel/post works end-to-end via cobalt when cobalt is available
+- [ ] YouTube failure paths surface real session/login blockers
 - [ ] unsupported/private URL fails honestly
 
 ## Manual review checklist
@@ -88,7 +93,7 @@ Convert one source into one public Google Drive link.
 - [ ] temp files are cleaned unless `--keep` is used
 - [ ] filenames are sanitized enough for Drive upload
 - [ ] failure messages are concrete and operator-usable
-- [ ] YouTube/Instagram fallbacks are clearly documented, not implied magic
+- [ ] cobalt/gallery-dl/yt-dlp ordering is clearly documented, not implied magic
 
 ## Operating spec
 
@@ -101,6 +106,7 @@ Convert one source into one public Google Drive link.
 ## Assumptions + gaps
 
 - assumes `gog` is installed and already authorized for the target Drive account
-- assumes `yt-dlp` is available either at `/opt/clawd-workspace/tools/yt-dlp-nightly/yt-dlp` or in PATH
-- YouTube browser fallback assumes a browser session that can load the target video without a login wall
-- Platform anti-bot, rate-limit, or auth changes can still break extraction; the skill must fail honestly when that happens
+- assumes `cobalt` is available either via `UPLOAD_TO_DRIVE_COBALT_API` or a detected local instance
+- assumes `gallery-dl` / `yt-dlp` are installed when those fallback layers are desired
+- YouTube may still require a working cobalt YouTube session stack or browser-backed fallback
+- platform anti-bot, rate-limit, or auth changes can still break extraction; the skill must fail honestly when that happens

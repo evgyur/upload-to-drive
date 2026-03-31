@@ -7,8 +7,9 @@ OpenClaw skill that turns an input into a public Google Drive link.
 - uploads a local file to Google Drive via `gog`
 - uploads inbound attachment paths
 - downloads a direct media URL first, then uploads it
-- handles Instagram with a direct embed-page video fallback
-- handles YouTube with `yt-dlp` first and an optional browser-CDP fallback
+- uses self-hosted `cobalt` as the preferred downloader backend for supported public sources
+- uses `gallery-dl` as an Instagram fallback backend
+- uses `yt-dlp` as another fallback backend
 - verifies that `anyone with link -> reader` is actually applied before returning the final URL
 
 ## Command
@@ -45,6 +46,13 @@ python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_dri
   --auth-guard /path/to/your/auth_guard.sh
 ```
 
+Use a self-hosted cobalt API:
+
+```bash
+python3 /opt/clawd-workspace/skills/public/upload-to-drive/scripts/upload_to_drive.py 'https://www.instagram.com/reel/...' \
+  --cobalt-api http://127.0.0.1:9469/
+```
+
 Use browser-CDP fallback for YouTube:
 
 ```bash
@@ -64,6 +72,8 @@ Environment variables:
 
 - `GOG_ACCOUNT`
 - `UPLOAD_TO_DRIVE_AUTH_GUARD`
+- `UPLOAD_TO_DRIVE_COBALT_API`
+- `UPLOAD_TO_DRIVE_GALLERY_DL`
 - `UPLOAD_TO_DRIVE_YTDLP`
 - `UPLOAD_TO_DRIVE_COOKIES_BROWSER`
 - `UPLOAD_TO_DRIVE_COOKIES_PROFILE`
@@ -73,14 +83,15 @@ Environment variables:
 ## Reliability notes
 
 ### Instagram
-The script first tries the public embed page and extracts a direct `video_url`. This is often more reliable than relying on `yt-dlp` alone.
+The best current path is a self-hosted `cobalt` instance with `alwaysProxy=true`. This avoids brittle direct media URL scraping and works well for public reels/posts in practice.
 
 ### YouTube
-The script tries `yt-dlp` first. If that is blocked and a browser CDP endpoint is supplied, it opens the live page in the browser session, reads `ytInitialPlayerResponse`, and uses the best directly exposed mp4 format URL.
+The script tries a self-hosted `cobalt` instance first, then `yt-dlp`, then optional browser-CDP fallback. A session-capable cobalt setup is the cleanest long-term route for YouTube.
 
 ## Notes
 
 - `gog` must already be installed and authorized for the target Drive account.
+- `cobalt` is recommended if you want better Instagram reliability.
 - Some YouTube/Instagram URLs may still hit login walls, anti-bot checks, or rate limits.
 - This repo is intentionally separate from auth-specific automation. Auth refresh/cron logic should live in an environment-specific companion skill or operator hook.
 
@@ -88,5 +99,6 @@ The script tries `yt-dlp` first. If that is blocked and a browser CDP endpoint i
 
 - `SKILL.md`
 - `scripts/upload_to_drive.py`
+- `scripts/browser_cdp_youtube.mjs`
 - `references/ops-and-inputs.md`
 - `references/upstream-link.md`
